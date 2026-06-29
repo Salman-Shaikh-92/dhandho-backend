@@ -29,9 +29,9 @@ from database import connect_to_db, close_db_connection
 async def lifespan(app: FastAPI):
     """Initialize Firebase Firestore and MongoDB on startup, close connections on shutdown."""
     await connect_to_firebase()
-    await connect_to_db()
+    # await connect_to_db()
     yield
-    await close_db_connection()
+    # await close_db_connection()
     await close_firebase_connection()
 
 
