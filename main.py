@@ -5,6 +5,8 @@ FastAPI application entry point.
 
 import logging
 import os
+import asyncio
+import httpx
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -23,6 +25,24 @@ from firebase_db import close_firebase_connection, connect_to_firebase
 from database import connect_to_db, close_db_connection
 
 # ---------------------------------------------------------------------------
+# Background Task
+# ---------------------------------------------------------------------------
+async def ping_health():
+    """Ping the health endpoint every 10 minutes (600 seconds) to keep the API awake."""
+    while True:
+        try:
+            await asyncio.sleep(600)
+            async with httpx.AsyncClient() as client:
+                port = os.getenv("PORT", 8000)
+                url = f"http://localhost:{port}/health"
+                response = await client.get(url)
+                logging.debug(f"Health ping status: {response.status_code}")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logging.error(f"Error pinging health endpoint: {e}")
+
+# ---------------------------------------------------------------------------
 # Lifespan — replaces deprecated startup / shutdown event handlers
 # ---------------------------------------------------------------------------
 @asynccontextmanager
@@ -30,7 +50,12 @@ async def lifespan(app: FastAPI):
     """Initialize Firebase Firestore and MongoDB on startup, close connections on shutdown."""
     await connect_to_firebase()
     # await connect_to_db()
+    
+    ping_task = asyncio.create_task(ping_health())
+    
     yield
+    
+    ping_task.cancel()
     # await close_db_connection()
     await close_firebase_connection()
 
