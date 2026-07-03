@@ -254,3 +254,78 @@ async def api_sync_user(user: UserClaims = Depends(get_current_user)):
             status_code=500,
             detail="Failed to sync user profile in Firestore."
         )
+
+# ---------------------------------------------------------------------------
+# 7. POST /api/conversations/{session_id}/roi
+# ---------------------------------------------------------------------------
+@router.post("/conversations/{session_id}/roi")
+async def api_generate_roi(session_id: str, user: UserClaims = Depends(get_current_user)):
+    """Generate a structured ROI report from the conversation history."""
+    try:
+        history = await firebase_db.get_conversation_history_formatted(session_id, user.uid)
+        if not history:
+            raise HTTPException(status_code=400, detail="No history found to generate report.")
+        
+        text_history = ""
+        for msg in history:
+            text_history += f"{msg['role'].upper()}: {msg['text']}\n\n"
+            
+        system_prompt = (
+            "You are an expert business analyst AI. "
+            "Read the following consultation transcript and generate a highly accurate ROI Automation Report in strict JSON format. "
+            "The JSON MUST match this exact schema:\n"
+            "{\n"
+            '  "roi_metrics": {\n'
+            '    "hours_saved_monthly": <number>,\n'
+            '    "cost_savings_monthly": <number>,\n'
+            '    "roi_percentage": <number>\n'
+            "  },\n"
+            '  "tool_recommendations": [\n'
+            "    {\n"
+            '      "tool_name": "<name>",\n'
+            '      "description": "<short description>"\n'
+            "    }\n"
+            "  ],\n"
+            '  "recommended_tool": "<Primary Tool/Stack>"\n'
+            "}\n"
+            "DO NOT return markdown formatting like ```json ... ```, ONLY return the raw JSON object."
+        )
+        
+        groq_api_key = os.getenv("GROQ_API_KEY")
+        if groq_api_key:
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.post(
+                        "https://api.groq.com/openai/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {groq_api_key}", "Content-Type": "application/json"},
+                        json={
+                            "model": "llama-3.1-8b-instant",
+                            "messages": [
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": text_history}
+                            ],
+                            "temperature": 0.2
+                        },
+                        timeout=20.0
+                    )
+                    if resp.status_code == 200:
+                        content = resp.json()["choices"][0]["message"]["content"].strip()
+                        if content.startswith("```json"): content = content[7:]
+                        if content.startswith("```"): content = content[3:]
+                        if content.endswith("```"): content = content[:-3]
+                        return json.loads(content.strip())
+            except Exception as e:
+                logger.error(f"Groq ROI failed: {e}")
+                
+        # Fallback to Gemini
+        model = genai.GenerativeModel('gemini-1.5-flash', system_instruction=system_prompt)
+        resp = await model.generate_content_async(text_history)
+        content = resp.text.strip()
+        if content.startswith("```json"): content = content[7:]
+        if content.startswith("```"): content = content[3:]
+        if content.endswith("```"): content = content[:-3]
+        return json.loads(content.strip())
+        
+    except Exception as e:
+        logger.error(f"Error generating ROI report: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate valid ROI report.")
