@@ -165,3 +165,43 @@ async def save_exchange(user_id: str, session_id: str, user_text: str, ai_text: 
     except Exception as e:
         logger.error(f"Error saving exchange: {e}")
         raise
+
+# ---------------------------------------------------------------------------
+# 4. Sync user profile on login
+# ---------------------------------------------------------------------------
+async def sync_user_profile(uid: str, email: Optional[str], display_name: Optional[str]) -> Dict[str, Any]:
+    if not _is_ready():
+        logger.error("Firestore not ready for user sync")
+        return {"status": "error", "detail": "Firestore not initialized"}
+        
+    try:
+        users_collection = db.collection("users")
+        user_ref = users_collection.document(uid)
+        user_doc = user_ref.get()
+        now = _now()
+        
+        if not user_doc.exists:
+            # Initialize fresh business consultant profile
+            profile_data = {
+                "uid": uid,
+                "email": email,
+                "displayName": display_name,
+                "initialized_at": now,
+                "last_login": now,
+                "automation_level": "Starter",
+                "workflow_tokens_remaining": 100,
+                "metrics_profile": "Surati Lala Mart"
+            }
+            user_ref.set(profile_data)
+            return {"status": "created", "profile": profile_data}
+        else:
+            # Seamlessly update last_login without overwriting
+            user_ref.update({"last_login": now})
+            # Return updated profile
+            updated_data = user_doc.to_dict()
+            updated_data["last_login"] = now
+            return {"status": "updated", "profile": updated_data}
+            
+    except Exception as e:
+        logger.error(f"Error provisioning user {uid}: {e}")
+        raise

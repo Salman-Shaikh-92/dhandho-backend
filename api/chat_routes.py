@@ -114,7 +114,7 @@ async def api_chat(request: ChatRequest, user: UserClaims = Depends(get_current_
     )
 
     model = genai.GenerativeModel(
-        'gemini-3.5-flash',
+        'gemini-1.5-flash',
         system_instruction=system_prompt
     )
     chat = model.start_chat(history=formatted_history)
@@ -221,3 +221,26 @@ async def api_chat(request: ChatRequest, user: UserClaims = Depends(get_current_
         yield f"data: {json.dumps({'done': True, 'session_id': session_id})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+# ---------------------------------------------------------------------------
+# 4. POST /api/users/sync
+# ---------------------------------------------------------------------------
+@router.post("/users/sync")
+async def api_sync_user(user: UserClaims = Depends(get_current_user)):
+    """
+    Syncs the authenticated user's profile with Firestore.
+    Called by the Next.js frontend upon successful login.
+    """
+    try:
+        result = await firebase_db.sync_user_profile(
+            uid=user.uid,
+            email=user.email,
+            display_name=user.name
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Error syncing user profile: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to sync user profile in Firestore."
+        )
