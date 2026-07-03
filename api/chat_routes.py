@@ -123,87 +123,61 @@ async def api_chat(request: ChatRequest, user: UserClaims = Depends(get_current_
     async def generate():
         full_reply = []
         try:
-            # 1. Try Gemini First
-            response = await chat.send_message_async(request.message, stream=True)
-            async for chunk in response:
-                text = chunk.text
-                if text:
-                    full_reply.append(text)
-                    yield f"data: {json.dumps({'chunk': text})}\n\n"
-                    
-        except Exception as e_gemini:
-            logger.warning(f"Gemini Error, falling back to Groq: {e_gemini}")
-            try:
-                # 2. Fallback to Groq (using raw httpx to avoid SDK version conflicts)
-                groq_api_key = os.getenv("GROQ_API_KEY")
-                groq_history = [{"role": "system", "content": system_prompt}]
-                for msg in history_in:
-                    api_role = "assistant" if msg.role == "ai" else "user"
-                    groq_history.append({"role": api_role, "content": msg.text})
-                groq_history.append({"role": "user", "content": request.message})
+            # 1. Try Groq First
+            groq_api_key = os.getenv("GROQ_API_KEY")
+            groq_history = [{"role": "system", "content": system_prompt}]
+            for msg in history_in:
+                api_role = "assistant" if msg.role == "ai" else "user"
+                groq_history.append({"role": api_role, "content": msg.text})
+            groq_history.append({"role": "user", "content": request.message})
 
-                async with httpx.AsyncClient() as groq_client:
-                    async with groq_client.stream(
-                        "POST",
-                        "https://api.groq.com/openai/v1/chat/completions",
-                        headers={"Authorization": f"Bearer {groq_api_key}", "Content-Type": "application/json"},
-                        json={"model": "llama-3.1-8b-instant", "messages": groq_history, "stream": True}
-                    ) as groq_response:
-                        if groq_response.status_code != 200:
-                            raise Exception(f"Groq API Error {groq_response.status_code}")
-                        async for line in groq_response.aiter_lines():
-                            if line.startswith("data: "):
-                                data_str = line[6:]
-                                if data_str == "[DONE]": break
-                                try:
-                                    data = json.loads(data_str)
-                                    text = data["choices"][0]["delta"].get("content", "")
-                                    if text:
-                                        full_reply.append(text)
-                                        yield f"data: {json.dumps({'chunk': text})}\n\n"
-                                except Exception as e:
-                                    logger.error(f"Groq JSON decoding error: {e}")
-                                    
-            except Exception as e_groq:
-                logger.warning(f"Groq Error, falling back to DeepSeek: {e_groq}")
-                try:
-                    # 3. Fallback to DeepSeek
-                    ds_api_key = os.getenv("DEEPSEEK_API_KEY")
-                    ds_history = [{"role": "system", "content": system_prompt}]
-                    for msg in history_in:
-                        api_role = "assistant" if msg.role == "ai" else "user"
-                        ds_history.append({"role": api_role, "content": msg.text})
-                    ds_history.append({"role": "user", "content": request.message})
-
-                    async with httpx.AsyncClient() as ds_client:
-                        async with ds_client.stream(
-                            "POST", 
-                            "https://api.deepseek.com/chat/completions",
-                            headers={"Authorization": f"Bearer {ds_api_key}", "Content-Type": "application/json"},
-                            json={"model": "deepseek-chat", "messages": ds_history, "stream": True}
-                        ) as ds_response:
-                            if ds_response.status_code == 402:
-                                raise Exception("DeepSeek API Token has ZERO Balance (402 Payment Required).")
-                            elif ds_response.status_code != 200:
-                                raise Exception(f"DeepSeek API Error {ds_response.status_code}")
+            async with httpx.AsyncClient() as groq_client:
+                async with groq_client.stream(
+                    "POST",
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {groq_api_key}", "Content-Type": "application/json"},
+                    json={"model": "llama-3.1-8b-instant", "messages": groq_history, "stream": True}
+                ) as groq_response:
+                    if groq_response.status_code != 200:
+                        raise Exception(f"Groq API Error {groq_response.status_code}")
+                    async for line in groq_response.aiter_lines():
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+                            if data_str == "[DONE]": break
+                            try:
+                                data = json.loads(data_str)
+                                text = data["choices"][0]["delta"].get("content", "")
+                                if text:
+                                    full_reply.append(text)
+                                    yield f"data: {json.dumps({'chunk': text})}\n\n"
+                            except Exception as e:
+                                logger.error(f"Groq JSON decoding error: {e}")
                                 
-                            async for line in ds_response.aiter_lines():
-                                if line.startswith("data: "):
-                                    data_str = line[6:]
-                                    if data_str == "[DONE]": break
-                                    try:
-                                        data = json.loads(data_str)
-                                        text = data["choices"][0]["delta"].get("content", "")
-                                        if text:
-                                            full_reply.append(text)
-                                            yield f"data: {json.dumps({'chunk': text})}\n\n"
-                                    except Exception as e:
-                                        logger.error(f"DeepSeek JSON decoding error: {e}")
-                except Exception as e_ds:
-                    logger.error(f"All LLMs Failed. DeepSeek Error: {e_ds}")
-                    error_msg = f"AI overloaded. DeepSeek Error: {e_ds}"
-                    yield f"data: {json.dumps({'error': error_msg})}\n\n"
-                    return
+        except Exception as e_groq:
+            logger.warning(f"Groq Error, falling back to Gemini: {e_groq}")
+            try:
+                # 2. Try Gemini
+                response = await chat.send_message_async(request.message, stream=True)
+                async for chunk in response:
+                    text = chunk.text
+                    if text:
+                        full_reply.append(text)
+                        yield f"data: {json.dumps({'chunk': text})}\n\n"
+            except Exception as e_gemini:
+                logger.error(f"All LLMs Failed. Gemini Error: {e_gemini}")
+                error_msg = f"AI overloaded. Groq and Gemini failed."
+                yield f"data: {json.dumps({'error': error_msg})}\n\n"
+                return
+            
+            # --- DEEPSEEK CODE COMMENTED OUT ---
+            # except Exception as e_groq:
+            #     logger.warning(f"Groq Error, falling back to DeepSeek: {e_groq}")
+            #     try:
+            #         # 3. Fallback to DeepSeek
+            #         ...
+            #     except Exception as e_ds:
+            #         ...
+            # -----------------------------------
             
         ai_reply = "".join(full_reply)
         
