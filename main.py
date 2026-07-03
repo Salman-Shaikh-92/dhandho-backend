@@ -97,8 +97,8 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=allowed_origins,
-        allow_credentials=True,    # Required for Authorization header / cookies
+        allow_origins=["*"],
+        allow_credentials=False,   # Not needed since we use Authorization headers instead of cookies
         allow_methods=["*"],
         allow_headers=["*"],
         expose_headers=["*"],
