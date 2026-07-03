@@ -38,6 +38,7 @@ import asyncio
 class ChatRequest(BaseModel):
     session_id: Optional[str] = None
     message: str
+    history: Optional[List[Message]] = []
     conversation_history: Optional[List[Message]] = []
     persona: Optional[str] = "Default Consultant"
 
@@ -86,7 +87,7 @@ async def api_get_history(session_id: str, user: UserClaims = Depends(get_curren
 async def api_chat(request: ChatRequest, user: UserClaims = Depends(get_current_user)):
     """Handle chat messages, pass to LLM, stream via SSE, and save exchange."""
     session_id = request.session_id or str(uuid.uuid4())
-    history_in = request.conversation_history or []
+    history_in = request.history or request.conversation_history or []
     
     # Map 'user' / 'ai' to Gemini's 'user' / 'model' roles
     formatted_history = []
@@ -217,13 +218,42 @@ async def api_chat(request: ChatRequest, user: UserClaims = Depends(get_current_
         except Exception as e:
             logger.error(f"DB Save Error: {e}")
 
+        # Detect recommendation format and trigger the frontend button
+        if "- **" in ai_reply or "recommendation" in ai_reply.lower():
+            yield f"data: {json.dumps({'chunk': ' ', 'recommendations': True})}\n\n"
+
         # Send a final event to let the client know the stream is complete
         yield f"data: {json.dumps({'done': True, 'session_id': session_id})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 # ---------------------------------------------------------------------------
-# 4. POST /api/users/sync
+# 4. PUT /api/conversations/{session_id}
+# ---------------------------------------------------------------------------
+class RenameRequest(BaseModel):
+    title: str
+
+@router.put("/conversations/{session_id}")
+async def api_rename_conversation(session_id: str, request: RenameRequest, user: UserClaims = Depends(get_current_user)):
+    """Rename a conversation."""
+    success = await firebase_db.rename_conversation(session_id, user.uid, request.title)
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to rename conversation")
+    return {"status": "success"}
+
+# ---------------------------------------------------------------------------
+# 5. DELETE /api/conversations/{session_id}
+# ---------------------------------------------------------------------------
+@router.delete("/conversations/{session_id}")
+async def api_delete_conversation(session_id: str, user: UserClaims = Depends(get_current_user)):
+    """Delete a conversation."""
+    success = await firebase_db.delete_conversation(session_id, user.uid)
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to delete conversation")
+    return {"status": "success"}
+
+# ---------------------------------------------------------------------------
+# 6. POST /api/users/sync
 # ---------------------------------------------------------------------------
 @router.post("/users/sync")
 async def api_sync_user(user: UserClaims = Depends(get_current_user)):

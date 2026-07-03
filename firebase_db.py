@@ -205,3 +205,43 @@ async def sync_user_profile(uid: str, email: Optional[str], display_name: Option
     except Exception as e:
         logger.error(f"Error provisioning user {uid}: {e}")
         raise
+
+# ---------------------------------------------------------------------------
+# 5. Rename conversation
+# ---------------------------------------------------------------------------
+async def rename_conversation(session_id: str, user_id: str, new_title: str) -> bool:
+    if not _is_ready():
+        return False
+    try:
+        conv_ref = conversations_collection.document(session_id)
+        conv_doc = conv_ref.get()
+        if not conv_doc.exists or conv_doc.to_dict().get("user_id") != user_id:
+            return False
+        conv_ref.update({"title": new_title, "updated_at": _now()})
+        return True
+    except Exception as e:
+        logger.error(f"Error renaming conversation: {e}")
+        return False
+
+# ---------------------------------------------------------------------------
+# 6. Delete conversation
+# ---------------------------------------------------------------------------
+async def delete_conversation(session_id: str, user_id: str) -> bool:
+    if not _is_ready():
+        return False
+    try:
+        conv_ref = conversations_collection.document(session_id)
+        conv_doc = conv_ref.get()
+        if not conv_doc.exists or conv_doc.to_dict().get("user_id") != user_id:
+            return False
+        
+        # Delete all messages in the subcollection first
+        msgs = conv_ref.collection("messages").stream()
+        for msg in msgs:
+            msg.reference.delete()
+            
+        conv_ref.delete()
+        return True
+    except Exception as e:
+        logger.error(f"Error deleting conversation: {e}")
+        return False
