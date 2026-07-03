@@ -89,6 +89,12 @@ async def api_chat(request: ChatRequest, user: UserClaims = Depends(get_current_
     session_id = request.session_id or str(uuid.uuid4())
     history_in = request.history or request.conversation_history or []
     
+    # The frontend appends the new message to history BEFORE sending it,
+    # so we must pop the last message if it's the exact same as request.message
+    # to avoid sending duplicate consecutive "user" messages to the LLMs!
+    if history_in and history_in[-1].role == "user" and history_in[-1].text == request.message:
+        history_in = history_in[:-1]
+    
     # Map 'user' / 'ai' to Gemini's 'user' / 'model' roles
     formatted_history = []
     for msg in history_in:
